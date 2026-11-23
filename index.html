@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My Board</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #f1f2f4; color: #172b4d; }
+
+  header { display: flex; align-items: center; justify-content: space-between; padding: 12px 24px;
+           background: linear-gradient(90deg, #0079bf, #6554c0); color: #fff; }
+  header h1 { margin: 0; font-size: 18px; }
+  header .btn { background: rgba(255,255,255,.2); color: #fff; border: none; padding: 6px 12px;
+                border-radius: 6px; cursor: pointer; font-size: 13px; }
+  header .btn:hover { background: rgba(255,255,255,.3); }
+
+  #board { display: flex; align-items: flex-start; gap: 12px; padding: 20px;
+           overflow-x: auto; height: calc(100vh - 55px); }
+
+  .list { background: #ebecf0; border-radius: 10px; width: 280px; flex-shrink: 0;
+          padding: 10px; display: flex; flex-direction: column; max-height: 100%; }
+  .list-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .list-title { font-weight: 600; font-size: 14px; padding: 4px 8px; border-radius: 4px;
+                outline: none; flex: 1; word-break: break-word; }
+  .list-title:hover { background: rgba(9,30,66,.08); cursor: text; }
+  .list-title:focus { box-shadow: 0 0 0 2px #0079bf; }
+
+  .cards { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; min-height: 10px; flex: 1; }
+
+  .card { position: relative; background: #fff; border-radius: 8px; padding: 8px 10px;
+          font-size: 14px; line-height: 1.4; box-shadow: 0 1px 2px rgba(9,30,66,.2); cursor: grab; }
+  .card.dragging { opacity: .55; transform: rotate(2deg); }
+  .card-text { outline: none; white-space: pre-wrap; word-break: break-word; }
+  .card-text:focus { box-shadow: 0 0 0 2px #0079bf; border-radius: 4px; }
+
+  .card-tools { position: absolute; top: 3px; right: 3px; display: flex; gap: 1px;
+                background: #fff; border-radius: 6px; padding: 2px; }
+  .icon-btn { background: none; border: none; color: #6b778c; font-size: 13px; cursor: pointer;
+              padding: 2px 6px; border-radius: 4px; visibility: hidden; }
+  .card:hover .icon-btn, .list-header:hover .icon-btn { visibility: visible; }
+  .icon-btn:hover { background: rgba(9,30,66,.12); color: #172b4d; }
+  @media (hover: none) { .icon-btn { visibility: visible; } } /* always show on touch devices */
+
+  .add-card-btn { display: block; width: 100%; text-align: left; background: none; border: none;
+                  color: #6b778c; font-size: 14px; padding: 8px; border-radius: 6px; cursor: pointer; margin-top: 6px; }
+  .add-card-btn:hover { background: rgba(9,30,66,.08); color: #172b4d; }
+
+  textarea, input[type="text"] { width: 100%; border: none; outline: none; border-radius: 8px;
+                                 padding: 8px 10px; font: inherit; color: inherit; resize: none; }
+  textarea:focus, input[type="text"]:focus { box-shadow: 0 0 0 2px #0079bf; }
+
+  .form-actions { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+  .form-actions .icon-btn { visibility: visible; font-size: 15px; }
+  .btn-primary { background: #0079bf; border: none; color: #fff; padding: 7px 14px;
+                 border-radius: 6px; font-size: 14px; cursor: pointer; }
+  .btn-primary:hover { background: #026aa7; }
+  .hidden { display: none; }
+
+  #add-list-col { flex-shrink: 0; width: 280px; }
+  #add-list-btn { width: 100%; text-align: left; background: rgba(9,30,66,.12); color: #172b4d;
+                  border: none; padding: 12px; border-radius: 10px; font-size: 14px; cursor: pointer; }
+  #add-list-btn:hover { background: rgba(9,30,66,.2); }
+  #add-list-form { background: #ebecf0; padding: 10px; border-radius: 10px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>📋 My Board</h1>
+  <button class="btn" id="reset-btn">Reset board</button>
+</header>
+
+<div id="board">
+  <div id="add-list-col">
+    <button id="add-list-btn">+ Add another list</button>
+    <div id="add-list-form" class="hidden">
+      <input type="text" id="new-list-name" placeholder="Enter list title…">
+      <div class="form-actions">
+        <button class="btn-primary" id="add-list-confirm">Add list</button>
+        <button class="icon-btn" id="add-list-cancel">✕</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const board = document.getElementById('board');
+const addCol = document.getElementById('add-list-col');
+const STORAGE_KEY = 'simple-trello-board';
+
+const uid = () => Math.random().toString(36).slice(2, 10);
+const esc = s => s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+function load() { try { return JSON.parse(localStorage.getItem(STORAGE_KEY)); } catch { return null; } }
+function save() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+
+let state = load() || {
+  lists: [
+    { id: uid(), title: 'To Do', cards: [
+      { id: uid(), text: "Welcome! Click a card's text to edit it." },
+      { id: uid(), text: 'Drag cards between lists.' }] },
+    { id: uid(), title: 'In Progress', cards: [{ id: uid(), text: 'Build something great 🚀' }] },
+    { id: uid(), title: 'Done', cards: [{ id: uid(), text: 'Deploy this board to GitHub Pages ✅' }] },
+  ],
+};
+
+const findList = id => state.lists.find(l => l.id === id);
+function findCard(cardId) {
+  for (const l of state.lists) { const c = l.cards.find(c => c.id === cardId); if (c) return c; }
+}
+
+function deleteCard(cardId) {
+  for (const l of state.lists) {
+    const i = l.cards.findIndex(c => c.id === cardId);
+    if (i !== -1) { l.cards.splice(i, 1); break; }
+  }
+  save(); render();
+}
+
+function deleteList(listId) {
+  if (!confirm('Delete this list and all of its cards?')) return;
+  state.lists = state.lists.filter(l => l.id !== listId);
+  save(); render();
+}
+
+function moveCard(cardId, dir) {
+  const li = state.lists.findIndex(l => l.cards.some(c => c.id === cardId));
+  if (li === -1) return;
+  const l = state.lists[li];
+  const ci = l.cards.findIndex(c => c.id === cardId);
+  const [card] = l.cards.splice(ci, 1);
+  const target = state.lists[li + dir];
+  if (!target) { l.cards.splice(ci, 0, card); return; }
+  dir > 0 ? target.cards.push(card) : target.cards.unshift(card);
+  save(); render();
+}
+
+function render() {
+  board.innerHTML = '';
+  state.lists.forEach(list => board.appendChild(buildList(list)));
+  board.appendChild(addCol);
+}
+
+function buildList(list) {
+  const el = document.createElement('div');
+  el.className = 'list';
+  el.dataset.id = list.id;
+  el.innerHTML = `
+    <div class="list-header">
+      <span class="list-title" spellcheck="false">${esc(list.title)}</span>
+      <button class="icon-btn del-list" title="Delete list">✕</button>
+    </div>
+    <div class="cards"></div>
+    <button class="add-card-btn">+ Add a card</button>
+    <div class="add-card-form hidden">
+      <textarea rows="2" placeholder="Enter a title for this card…"></textarea>
+      <div class="form-actions">
+        <button class="btn-primary add-confirm">Add card</button>
+        <button class="icon-btn add-cancel">✕</button>
+      </div>
+    </div>`;
+
+  const cardsEl = el.querySelector('.cards');
+  list.cards.forEach(card => cardsEl.appendChild(buildCard(card)));
+
+  // Rename list
+  const titleEl = el.querySelector('.list-title');
+  titleEl.addEventListener('click', () => {
+    titleEl.contentEditable = 'true';
+    titleEl.focus();
+    window.getSelection().selectAllChildren(titleEl);
+  });
+  titleEl.addEventListener('blur', () => {
+    titleEl.contentEditable = 'false';
+    const t = titleEl.textContent.trim();
+    const l = findList(list.id);
+    if (!l) return;
+    if (t) { l.title = t; save(); } else { titleEl.textContent = l.title; }
+  });
+  titleEl.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); titleEl.blur(); }
+    if (e.key === 'Escape') { titleEl.textContent = findList(list.id)?.title || ''; titleEl.blur(); }
+  });
+
+  el.querySelector('.del-list').addEventListener('click', () => deleteList(list.id));
+
+  // Drag & drop between/inside lists
+  cardsEl.addEventListener('dragover', e => {
+    e.preventDefault();
+    const dragging = document.querySelector('.card.dragging');
+    if (!dragging) return;
+    const after = getAfterElement(cardsEl, e.clientY);
+    if (after == null) cardsEl.appendChild(dragging);
+    else cardsEl.insertBefore(dragging, after);
+  });
+
+  // Add card
+  const addBtn = el.querySelector('.add-card-btn');
+  const form = el.querySelector('.add-card-form');
+  const textarea = form.querySelector('textarea');
+  const openForm = () => { addBtn.classList.add('hidden'); form.classList.remove('hidden'); textarea.focus(); };
+  const closeForm = () => { form.classList.add('hidden'); addBtn.classList.remove('hidden'); textarea.value = ''; };
+  const submit = () => {
+    const text = textarea.value.trim();
+    closeForm();
+    if (text) { findList(list.id)?.cards.push({ id: uid(), text }); save(); }
+    render();
+  };
+  addBtn.addEventListener('click', openForm);
+  form.querySelector('.add-cancel').addEventListener('click', closeForm);
+  form.querySelector('.add-confirm').addEventListener('click', submit);
+  textarea.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
+    if (e.key === 'Escape') closeForm();
+  });
+
+  return el;
+}
+
+function buildCard(card) {
+  const el = document.createElement('div');
+  el.className = 'card';
+  el.draggable = true;
+  el.dataset.id = card.id;
+  el.innerHTML = `
+    <span class="card-text" spellcheck="false">${esc(card.text)}</span>
+    <span class="card-tools">
+      <button class="icon-btn move-left" title="Move to previous list">←</button>
+      <button class="icon-btn move-right" title="Move to next list">→</button>
+      <button class="icon-btn card-del" title="Delete card">✕</button>
+    </span>`;
+
+  el.querySelector('.move-left').addEventListener('click', () => moveCard(card.id, -1));
+  el.querySelector('.move-right').addEventListener('click', () => moveCard(card.id, 1));
+  el.querySelector('.card-del').addEventListener('click', () => deleteCard(card.id));
+
+  // Edit card text
+  const textEl = el.querySelector('.card-text');
+  textEl.addEventListener('click', () => {
+    if (textEl.isContentEditable) return;
+    textEl.contentEditable = 'true';
+    textEl.focus();
+    window.getSelection().selectAllChildren(textEl);
+  });
+  textEl.addEventListener('blur', () => {
+    textEl.contentEditable = 'false';
+    const c = findCard(card.id);
+    if (!c) return;
+    const t = textEl.textContent.trim();
+    if (t && t !== c.text) { c.text = t; save(); }
+    else if (!t) { deleteCard(card.id); }
+    else { textEl.textContent = c.text; }
+  });
+  textEl.addEventListener('keydown', e => {
+    e.stopPropagation();
+    if (e.key === 'Enter') { e.preventDefault(); textEl.blur(); }
+    if (e.key === 'Escape') { textEl.textContent = findCard(card.id)?.text || ''; textEl.blur(); }
+  });
+
+  el.addEventListener('dragstart', e => {
+    el.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', card.id);
+  });
+  el.addEventListener('dragend', syncFromDOM);
+
+  return el;
+}
+
+function getAfterElement(container, y) {
+  let closest = { offset: -Infinity, element: null };
+  for (const child of container.querySelectorAll('.card:not(.dragging)')) {
+    const box = child.getBoundingClientRect();
+    const offset = y - box.top - box.height / 2;
+    if (offset < 0 && offset > closest.offset) closest = { offset, element: child };
+  }
+  return closest.element;
+}
+
+// Rebuild state to match the DOM after a drag, then persist
+function syncFromDOM() {
+  document.querySelectorAll('.card').forEach(c => c.classList.remove('dragging'));
+  const byId = new Map(state.lists.flatMap(l => l.cards.map(c => [c.id, c])));
+  const listById = new Map(state.lists.map(l => [l.id, l]));
+  state.lists = [...board.querySelectorAll('.list')].map(el => {
+    const orig = listById.get(el.dataset.id);
+    const cards = [...el.querySelectorAll('.card')].map(c => byId.get(c.dataset.id)).filter(Boolean);
+    return { id: orig.id, title: orig.title, cards };
+  });
+  save();
+}
+
+// Add list
+const addListBtn = document.getElementById('add-list-btn');
+const addListForm = document.getElementById('add-list-form');
+const newListName = document.getElementById('new-list-name');
+const openListForm = () => { addListBtn.classList.add('hidden'); addListForm.classList.remove('hidden'); newListName.focus(); };
+const closeListForm = () => { addListForm.classList.add('hidden'); addListBtn.classList.remove('hidden'); newListName.value = ''; };
+function submitList() {
+  const title = newListName.value.trim();
+  closeListForm();
+  if (title) { state.lists.push({ id: uid(), title, cards: [] }); save(); }
+  render();
+}
+addListBtn.addEventListener('click', openListForm);
+document.getElementById('add-list-cancel').addEventListener('click', closeListForm);
+document.getElementById('add-list-confirm').addEventListener('click', submitList);
+newListName.addEventListener('keydown', e => {
+  if (e.key === 'Enter') submitList();
+  if (e.key === 'Escape') closeListForm();
+});
+
+// Reset
+document.getElementById('reset-btn').addEventListener('click', () => {
+  if (confirm('Reset the board to its default lists?')) {
+    localStorage.removeItem(STORAGE_KEY);
+    location.reload();
+  }
+});
+
+render();
+</script>
+</body>
+</html>
